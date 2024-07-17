@@ -1,4 +1,4 @@
-import { AbiFunction, decodeFunctionData, parseAbiItem, toFunctionSelector } from "viem"
+import { AbiFunction, decodeAbiParameters, decodeFunctionData, parseAbiItem, toFunctionSelector } from "viem"
 import { NextFunction, Request, RequestHandler, Response, Router, json } from "express"
 
 export interface FunctionHandler {
@@ -18,19 +18,22 @@ export function CCIPHandler(funcs: FunctionHandler[]): Router {
       continue
     }
 
-    router.get(`/:sender/${selector}*.json`, ccipMiddleware(abiFunc), ...f.handlers)
+    router.get(`/:sender/${selector}*.json`, ccipGetMiddleware(abiFunc), ...f.handlers)
+    router.post('/', ccipPostMiddleware(abiFunc), ...f.handlers)
   }
 
   return router
 }
 
-function ccipMiddleware(func: AbiFunction): RequestHandler {
+function ccipGetMiddleware(func: AbiFunction): RequestHandler {
   return (req: Request, res: Response, next: NextFunction) => {
-    const selector = toFunctionSelector(func)
     const params = req.params
+    const calldata = params["0"]
+
+    const selector = toFunctionSelector(func)
     const { args } = decodeFunctionData({
       abi: [func],
-      data: `${selector}${params["0"]}`
+      data: `${selector}${calldata}`
     })
 
     res.locals = func.inputs.reduce<{
@@ -40,6 +43,31 @@ function ccipMiddleware(func: AbiFunction): RequestHandler {
       [input.name || i.toString()]: args[i]
     }), {})
 
+    next()
+  }
+}
+
+function ccipPostMiddleware(func: AbiFunction): RequestHandler {
+  return (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { data, signature } = req.body;
+
+      const { args } = decodeFunctionData({
+        abi: [func],
+        data
+      })
+
+      res.locals = func.inputs.reduce<{
+        [key: string]: unknown;
+      }>((argsMap, input, i) => ({
+        ...argsMap,
+        [input.name || i.toString()]: args[i]
+      }), {
+        signature
+      })
+    } catch (err) {
+      res.status(404)
+    }
     next()
   }
 }
